@@ -193,6 +193,19 @@ button{cursor:pointer;font-family:var(--fb);}
 .dc:last-child{border-right:none;}
 .dc.tc{background:rgba(139,92,246,0.03);}
 .hc{height:52px;border-bottom:1px solid var(--border);}
+/* month view */
+.mview{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.mvhc{padding:8px;text-align:center;font-size:10px;font-weight:600;color:var(--text3);background:var(--bg2);border-bottom:1px solid var(--border);}
+.mvdc{min-height:80px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:4px;cursor:pointer;transition:background 0.15s;}
+.mvdc:hover{background:var(--glass2);}
+.mvdc:nth-child(7n){border-right:none;}
+.mvdd{font-size:11px;font-weight:600;color:var(--text2);margin-bottom:4px;text-align:right;}
+.mvdd.today{background:var(--accent);color:#fff;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin-left:auto;font-size:10px;}
+.mvdd.om{color:var(--text3);}
+.mvev{font-size:9px;font-weight:600;padding:1px 4px;border-radius:3px;margin-bottom:2px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+.mvev.v{background:rgba(139,92,246,0.2);color:var(--accent2);}
+.mvev.g{background:rgba(16,217,126,0.12);color:var(--green);}
+.mvev.o{background:rgba(255,159,67,0.12);color:var(--orange);}
 .cev{position:absolute;left:3px;right:3px;border-radius:6px;padding:2px 6px;font-size:10px;font-weight:600;cursor:pointer;overflow:hidden;z-index:2;}
 .cev.v{background:rgba(139,92,246,0.3);border-left:3px solid var(--accent);color:var(--accent2);}
 .cev.g{background:rgba(16,217,126,0.15);border-left:3px solid var(--green);color:var(--green);}
@@ -523,11 +536,15 @@ button{cursor:pointer;font-family:var(--fb);}
         <!-- CALENDAR -->
         <div class="sec fade-in" id="sec-calendar">
           <div class="ccontrols">
-            <button class="cnav" onclick="chgWk(-1)"><span class="material-symbols-outlined" style="font-size:18px;">chevron_left</span></button>
+            <button class="cnav" onclick="chgView(-1)"><span class="material-symbols-outlined" style="font-size:18px;">chevron_left</span></button>
             <div class="ctitle" id="calT">Loading…</div>
-            <button class="cnav" onclick="chgWk(1)"><span class="material-symbols-outlined" style="font-size:18px;">chevron_right</span></button>
+            <button class="cnav" onclick="chgView(1)"><span class="material-symbols-outlined" style="font-size:18px;">chevron_right</span></button>
             <div style="flex:1;"></div>
-            <div class="vtabs"><button class="vtab">Day</button><button class="vtab active">Week</button><button class="vtab">Month</button></div>
+            <div class="vtabs">
+              <button class="vtab" onclick="setCalView('day',this)">Day</button>
+              <button class="vtab active" onclick="setCalView('week',this)">Week</button>
+              <button class="vtab" onclick="setCalView('month',this)">Month</button>
+            </div>
             <button class="btn btnp" style="margin-left:12px;display:flex;align-items:center;gap:6px;" onclick="openModal()">
               <span class="material-symbols-outlined" style="font-size:16px;">add</span>New Event
             </button>
@@ -599,8 +616,7 @@ button{cursor:pointer;font-family:var(--fb);}
           <div class="rpt"><span>Quick Notes</span>
             <span class="material-symbols-outlined" onclick="switchSec('notes',document.querySelector('[data-s=notes]'))">open_in_new</span>
           </div>
-          <div class="qnrp"><div class="qnt">Check mobile typography scaling.</div><div class="qntt">2h ago</div></div>
-          <div class="qnrp"><div class="qnt">Grocery: Oat milk, coffee beans, avocados.</div><div class="qntt">5h ago</div></div>
+          <div id="rpNotes"></div>
         </div>
         <div>
           <div class="rpt"><span>Recent Activity</span></div>
@@ -686,6 +702,9 @@ const LS_SESSION  = 'fs_sessionId';   // backend session ID
 const LS_CID      = 'fs_cid';          // saved client ID
 const LS_TASKS_FB = 'fs_tasks_fb';     // fallback tasks
 const LS_EVTS_FB  = 'fs_evts_fb';      // fallback events
+const LS_USER     = 'fs_user';          // cached user info for offline restore
+const LS_DEMO     = 'fs_demo';          // was demo mode
+const LS_NOTES    = 'fs_notes';         // persist notes locally
 
 // ══════════════════════════════════════════════
 // STATE
@@ -760,8 +779,23 @@ async function checkAutoLogin(){
   const cid=localStorage.getItem(LS_CID);
   if(cid){GOOGLE_CLIENT_ID=cid;const inp=document.getElementById('cidInput');if(inp)inp.value=cid;}
 
+  // Restore saved notes from localStorage
+  try{const sn=localStorage.getItem(LS_NOTES);if(sn)notes=JSON.parse(sn);}catch(e){}
+
   const sessionId=localStorage.getItem(LS_SESSION);
   if(!sessionId){
+    // Check if we have a cached user (faster restore without backend)
+    const cachedUser=localStorage.getItem(LS_USER);
+    const wasDemo=localStorage.getItem(LS_DEMO)==='1';
+    if(cachedUser){
+      try{
+        user=JSON.parse(cachedUser);isDemo=wasDemo;
+        await launchApp(true);
+        loadFromBackend();
+        if(isDemo){loadDemoData();}
+        return;
+      }catch(e){}
+    }
     hideLoader();return;
   }
 
@@ -771,6 +805,9 @@ async function checkAutoLogin(){
     user=data.user;
     accessToken=data.googleToken||null;
     isDemo=!!data.user.isDemo;
+    // Cache user locally so refresh works even if backend is slow
+    localStorage.setItem(LS_USER,JSON.stringify(user));
+    localStorage.setItem(LS_DEMO,isDemo?'1':'0');
     await launchApp(true); // silent=true (from session restore)
     loadFromBackend();
     if(accessToken && !isDemo){fetchGmail();fetchGCal();}
@@ -778,7 +815,21 @@ async function checkAutoLogin(){
     return;
   }
 
-  // Session expired
+  // Backend failed — try restoring from cached user
+  const cachedUser=localStorage.getItem(LS_USER);
+  const wasDemo=localStorage.getItem(LS_DEMO)==='1';
+  if(cachedUser){
+    try{
+      user=JSON.parse(cachedUser);isDemo=wasDemo;
+      await launchApp(true);
+      loadFromBackend();
+      if(isDemo){loadDemoData();}
+      showT('⚡ Restored from cache — working offline');
+      return;
+    }catch(e){}
+  }
+
+  // Session truly expired
   localStorage.removeItem(LS_SESSION);
   hideLoader();
 }
@@ -888,6 +939,9 @@ function handleGoogleSignIn(){
         localStorage.setItem(LS_SESSION,sessionData.sessionId);
         if(GOOGLE_CLIENT_ID) localStorage.setItem(LS_CID,GOOGLE_CLIENT_ID);
       }
+      // Cache user locally for refresh persistence
+      localStorage.setItem(LS_USER,JSON.stringify(user));
+      localStorage.setItem(LS_DEMO,'0');
       await launchApp();
       loadFromBackend();
       fetchGmail();
@@ -908,6 +962,9 @@ async function fetchProfile(){
 async function launchDemo(){
   isDemo=true;
   user={name:'Shivam',email:'shivam@gmail.com',avatar:null,isDemo:true};
+  // Cache user locally for refresh persistence
+  localStorage.setItem(LS_USER,JSON.stringify(user));
+  localStorage.setItem(LS_DEMO,'1');
   // Create demo backend session
   const sessionData=await api('/api/auth','POST',{googleToken:'demo',user});
   if(sessionData?.sessionId) localStorage.setItem(LS_SESSION,sessionData.sessionId);
@@ -924,7 +981,7 @@ async function launchApp(silent=false){
   document.getElementById('loginPage').style.display='none';
   document.getElementById('appPage').style.display='block';
   updUserUI();setDate();renderMiniCal();renderKanban();renderNotes();renderCal();
-  updOvTasks();updCalStats();
+  updOvTasks();updCalStats();renderQuickNotes();
 }
 
 function updUserUI(){
@@ -942,6 +999,8 @@ async function doLogout(){
   const sessionId=localStorage.getItem(LS_SESSION);
   if(sessionId) await api('/api/auth','DELETE');
   localStorage.removeItem(LS_SESSION);
+  localStorage.removeItem(LS_USER);
+  localStorage.removeItem(LS_DEMO);
   accessToken=null;isDemo=false;
   document.getElementById('appPage').style.display='none';
   document.getElementById('loginPage').style.display='flex';
@@ -1066,22 +1125,37 @@ function updCalStats(){
   document.getElementById('stEvts').innerHTML=`${te.length} `;
   document.getElementById('stEvtH').textContent=te.length>0?`Next: ${te[0]?.title||''}`:'No events today';
   const ov=document.getElementById('ovEvts');
-  if(!te.length){ov.innerHTML='<div style="color:var(--text3);font-size:13px;padding:8px 0;">No events today 🎉</div>';return;}
-  ov.innerHTML='<div>'+te.slice(0,4).map((ev,i)=>`
-    <div class="tli">
-      <div style="position:relative;"><div class="tld ${i===0?'a':'d'}"></div>${i<te.length-1?'<div class="tll"></div>':''}</div>
-      <div class="tlc"><div class="tln">${ev.title}</div><div class="tlm">${ev.description||''}</div></div>
-      <div class="tlt">${new Date(ev.start).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</div>
-    </div>`).join('')+'</div>';
+  // Today's events card
+  if(!te.length){
+    ov.innerHTML='<div style="color:var(--text3);font-size:13px;padding:8px 0;">No events today 🎉</div>';
+  } else {
+    ov.innerHTML='<div>'+te.slice(0,4).map((ev)=>{
+      const idx=calEvs.indexOf(ev);
+      return `
+      <div class="tli" style="align-items:center;">
+        <div class="tlc"><div class="tln">${ev.title}</div><div class="tlm">${new Date(ev.start).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}${ev.description?' · '+ev.description:''}</div></div>
+        <button data-idx="${idx}" title="Delete event" style="flex-shrink:0;width:26px;height:26px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text3);display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;" class="ov-ev-del-btn">
+          <span class="material-symbols-outlined" style="font-size:13px;pointer-events:none;">delete</span>
+        </button>
+      </div>`;
+    }).join('')+'</div>';
+  }
+  // Upcoming events in right panel — ALWAYS update (no early return!)
   const rp=document.getElementById('rpUp');
   const cols=['var(--accent)','var(--green)','var(--orange)','var(--blue)'];
   const upc=calEvs.filter(ev=>new Date(ev.start)>=new Date()).slice(0,4);
-  if(!upc.length){rp.innerHTML='<div style="color:var(--text3);font-size:12px;">No upcoming events</div>';return;}
-  rp.innerHTML=upc.map((ev,i)=>`
-    <div class="upci">
-      <div class="upcic" style="background:${cols[i%4]};"></div>
-      <div class="upcii"><div class="upcin">${ev.title}</div><div class="upcit">${fmtEvT(ev.start)}</div></div>
-    </div>`).join('');
+  if(!upc.length){rp.innerHTML='<div style="color:var(--text3);font-size:12px;">No upcoming events</div>';renderMiniCal();return;}
+  rp.innerHTML=upc.map((ev,i)=>{
+    const idx=calEvs.indexOf(ev);
+    return `
+    <div class="upci" style="align-items:center;">
+      <div class="upcic" style="background:${cols[i%4]};height:36px;"></div>
+      <div class="upcii" style="flex:1;"><div class="upcin">${ev.title}</div><div class="upcit">${fmtEvT(ev.start)}</div></div>
+      <button data-idx="${idx}" title="Delete event" style="flex-shrink:0;width:22px;height:22px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text3);display:flex;align-items:center;justify-content:center;cursor:pointer;" class="ov-ev-del-btn">
+        <span class="material-symbols-outlined" style="font-size:12px;pointer-events:none;">delete</span>
+      </button>
+    </div>`;
+  }).join('');
   renderMiniCal();
 }
 
@@ -1091,6 +1165,100 @@ function fmtEvT(d){
   return `${p} · ${dt.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}`;
 }
 
+// ── master refresh – call this after ANY calEvs change ──────────
+function refreshAll(){
+  renderCalView();
+  renderEvList();
+  updCalStats();
+  renderQuickNotes();
+  renderMiniCal();
+}
+
+// ── CALENDAR VIEW SYSTEM ─────────────────────────────────────────
+let calView='week'; // 'day' | 'week' | 'month'
+let dayOff=0;
+let monthOff=0;
+
+function setCalView(v,btn){
+  calView=v;
+  document.querySelectorAll('.vtab').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  wkOff=0;dayOff=0;monthOff=0;
+  renderCalView();
+}
+
+function chgView(d){
+  if(calView==='week')wkOff+=d;
+  else if(calView==='day')dayOff+=d;
+  else if(calView==='month')monthOff+=d;
+  renderCalView();
+}
+
+function renderCalView(){
+  if(calView==='day')renderDayView();
+  else if(calView==='month')renderMonthView();
+  else renderCal();
+}
+
+// Format a Date as YYYY-MM-DD in LOCAL timezone (avoids UTC off-by-one)
+function localDate(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+
+function renderDayView(){
+  const g=document.getElementById('wg'),today=new Date();
+  const d=new Date(today);d.setDate(d.getDate()+dayOff);
+  const isToday=d.toDateString()===today.toDateString();
+  document.getElementById('calT').textContent=d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  const hrs=[];for(let h=8;h<=19;h++)hrs.push(h);
+  g.className='wg';g.style.gridTemplateColumns='50px 1fr';
+  let html=`<div style="background:var(--bg2);border-bottom:1px solid var(--border);"></div>`;
+  html+=`<div class="wghc ${isToday?'tc':''}"><span>${d.getDate()}</span></div>`;
+  hrs.forEach(h=>{
+    const lb=h===12?'12 PM':h<12?h+' AM':(h-12)+' PM';
+    html+=`<div class="tmc">${lb}</div>`;
+    const de=calEvs.filter(ev=>new Date(ev.start).toDateString()===d.toDateString()&&new Date(ev.start).getHours()===h);
+    let eh='';
+    de.forEach(ev=>{
+      const sh=new Date(ev.start).getHours()+(new Date(ev.start).getMinutes()/60);
+      const end_h=ev.end?new Date(ev.end).getHours()+(new Date(ev.end).getMinutes()/60):sh+1;
+      const top=(sh-Math.floor(sh))*52,ht=Math.max((end_h-sh)*52-4,18);
+      const cm2={'var(--accent)':'v','var(--green)':'g','var(--orange)':'o','var(--blue)':'v'};
+      eh+=`<div class="cev ${cm2[ev.color]||'v'}" style="top:${top}px;height:${ht}px;" title="${ev.title}">${ev.title}</div>`;
+    });
+    const timeStr=(h<10?'0'+h:h)+':00';
+    html+=`<div class="hc dc ${isToday?'tc':''}" style="position:relative;" onclick="openModal('${localDate(d)}','${timeStr}')">${eh}</div>`;
+  });
+  g.innerHTML=html;
+}
+
+function renderMonthView(){
+  const g=document.getElementById('wg'),today=new Date();
+  const base=new Date(today.getFullYear(),today.getMonth()+monthOff,1);
+  const y=base.getFullYear(),m=base.getMonth();
+  const lastDay=new Date(y,m+1,0);
+  const mns=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('calT').textContent=mns[m]+' '+y;
+  g.className='mview';g.removeAttribute('style');
+  g.innerHTML='';
+  ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].forEach(day=>{g.innerHTML+=`<div class="mvhc">${day}</div>`;});
+  const startDow=(new Date(y,m,1).getDay()||7)-1;
+  for(let i=0;i<startDow;i++){
+    const pd=new Date(y,m,1-startDow+i);
+    g.innerHTML+=`<div class="mvdc"><div class="mvdd om">${pd.getDate()}</div></div>`;
+  }
+  const cm={'var(--accent)':'v','var(--green)':'g','var(--orange)':'o','var(--blue)':'v'};
+  for(let dd=1;dd<=lastDay.getDate();dd++){
+    const cur=new Date(y,m,dd);
+    const isT=cur.toDateString()===today.toDateString();
+    const dayEvs=calEvs.filter(ev=>new Date(ev.start).toDateString()===cur.toDateString());
+    const evHtml=dayEvs.slice(0,3).map(ev=>`<div class="mvev ${cm[ev.color]||'v'}">${ev.title}</div>`).join('')+
+      (dayEvs.length>3?`<div style="font-size:9px;color:var(--text3);">+${dayEvs.length-3} more</div>`:'');
+    g.innerHTML+=`<div class="mvdc" onclick="openModal('${localDate(cur)}','10:00')"><div class="mvdd${isT?' today':''}">${dd}</div>${evHtml}</div>`;
+  }
+  const total=startDow+lastDay.getDate();
+  const rem=(7-total%7)%7;
+  for(let i=1;i<=rem;i++) g.innerHTML+=`<div class="mvdc"><div class="mvdd om">${i}</div></div>`;
+}
+
 function renderCal(){
   const g=document.getElementById('wg'),today=new Date();
   const sow=new Date(today);sow.setDate(today.getDate()-today.getDay()+1+wkOff*7);
@@ -1098,6 +1266,8 @@ function renderCal(){
   document.getElementById('calT').textContent='Week of '+sow.toLocaleDateString('en-US',{month:'long',day:'numeric'});
   const dn=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],hrs=[];
   for(let h=8;h<=19;h++)hrs.push(h);
+  // Reset class and inline styles so month->week doesn't leave .mview layout
+  g.className='wg';g.removeAttribute('style');
   let html=`<div style="background:var(--bg2);border-bottom:1px solid var(--border);"></div>`;
   days.forEach((d,i)=>{const it=d.toDateString()===today.toDateString();html+=`<div class="wghc ${it?'tc':''}">${dn[i]}<span>${d.getDate()}</span></div>`;});
   hrs.forEach(h=>{
@@ -1114,7 +1284,8 @@ function renderCal(){
         const cm={'var(--accent)':'v','var(--green)':'g','var(--orange)':'o','var(--blue)':'v'};
         eh+=`<div class="cev ${cm[ev.color]||'v'}" style="top:${top}px;height:${ht}px;" title="${ev.title}">${ev.title}</div>`;
       });
-      html+=`<div class="hc dc ${it?'tc':''}" style="position:relative;" onclick="openModal()">${eh}</div>`;
+      const timeStr=(h<10?'0'+h:h)+':00';
+      html+=`<div class="hc dc ${it?'tc':''}" style="position:relative;" onclick="openModal('${localDate(d)}','${timeStr}')">${eh}</div>`;
     });
   });
   g.innerHTML=html;
@@ -1122,39 +1293,60 @@ function renderCal(){
 
 function renderEvList(){
   const el=document.getElementById('evList');if(!el)return;
+  // Sort and store as a parallel array so we can delete by index (avoids ID escaping issues)
   const sorted=[...calEvs].sort((a,b)=>new Date(a.start)-new Date(b.start));
   if(!sorted.length){el.innerHTML='<div style="color:var(--text3);font-size:13px;">No events. Click "New Event" to add one.</div>';return;}
   const cols=['var(--accent)','var(--green)','var(--orange)','var(--blue)','#2dd4bf'];
-  el.innerHTML=sorted.map((ev,i)=>`
-    <div class="ev-item" id="evitem-${ev.id}">
+  el.innerHTML=sorted.map((ev,i)=>{
+    const calIdx=calEvs.indexOf(ev);
+    return `
+    <div class="ev-item" data-calidx="${calIdx}">
       <div class="ev-dot" style="background:${cols[i%cols.length]};"></div>
       <div class="ev-info">
         <div class="ev-title">${ev.title}</div>
         <div class="ev-time">${fmtEvT(ev.start)}${ev.description?' · '+ev.description:''}</div>
       </div>
       <div class="ev-actions">
-        <button class="ev-done-btn" onclick="completeEv('${ev.id}')" title="Mark done & delete">
-          <span class="material-symbols-outlined" style="font-size:14px;">check</span>
+        <button class="ev-done-btn" data-calidx="${calIdx}" title="Mark done">
+          <span class="material-symbols-outlined" style="font-size:14px;pointer-events:none;">check</span>
         </button>
-        <button class="ev-del-btn" onclick="deleteEv('${ev.id}')" title="Delete">
-          <span class="material-symbols-outlined" style="font-size:14px;">delete</span>
+        <button class="ev-del-btn" data-calidx="${calIdx}" title="Delete">
+          <span class="material-symbols-outlined" style="font-size:14px;pointer-events:none;">delete</span>
         </button>
       </div>
-    </div>`).join('');
+    </div>`;}).join('');
 }
 
-function completeEv(id){showT('✅ Event completed!');deleteEv(id);}
-
-function deleteEv(id){
-  const el=document.getElementById('evitem-'+id);
-  if(el){el.classList.add('deleting');setTimeout(()=>{calEvs=calEvs.filter(e=>e.id!==id);saveCalEvs();renderCal();updCalStats();renderEvList();renderMiniCal();},350);}
-  else{calEvs=calEvs.filter(e=>e.id!==id);saveCalEvs();renderCal();updCalStats();}
+function deleteEvByIdx(idx){
+  if(idx<0||idx>=calEvs.length)return;
+  const item=document.querySelector(`[data-calidx="${idx}"].ev-item`);
+  if(item){item.classList.add('deleting');setTimeout(()=>{calEvs.splice(idx,1);saveCalEvs();refreshAll();},350);}
+  else{calEvs.splice(idx,1);saveCalEvs();refreshAll();}
 }
+
+// Delegated click handler for event list
+document.addEventListener('click',function(e){
+  const doneBtn=e.target.closest('.ev-done-btn');
+  const delBtn=e.target.closest('.ev-del-btn');
+  const ovDelBtn=e.target.closest('.ov-ev-del-btn');
+  if(doneBtn){
+    const idx=parseInt(doneBtn.dataset.calidx);
+    if(!isNaN(idx)){showT('✅ Event completed!');deleteEvByIdx(idx);}
+  } else if(delBtn){
+    const idx=parseInt(delBtn.dataset.calidx);
+    if(!isNaN(idx)){deleteEvByIdx(idx);showT('🗑 Event deleted');}
+  } else if(ovDelBtn){
+    const idx=parseInt(ovDelBtn.dataset.idx);
+    if(!isNaN(idx)){calEvs.splice(idx,1);saveCalEvs();refreshAll();showT('🗑 Event deleted');}
+  }
+});
 
 function chgWk(d){wkOff+=d;renderCal();}
 
-function openModal(){
-  const t=new Date();document.getElementById('evDa').value=t.toISOString().split('T')[0];document.getElementById('evTm').value='10:00';
+function openModal(date, time){
+  const t=new Date();
+  document.getElementById('evDa').value=date||t.toISOString().split('T')[0];
+  document.getElementById('evTm').value=time||'10:00';
   document.getElementById('evMov').classList.add('show');
 }
 function closeModal(){document.getElementById('evMov').classList.remove('show');}
@@ -1169,7 +1361,7 @@ function saveEv(){
   const e=new Date(s);e.setHours(e.getHours()+1);
   const cm={v:'var(--accent)',g:'var(--green)',o:'var(--orange)'};
   calEvs.push({id:'local'+Date.now(),title:ti,start:s,end:e,color:cm[document.getElementById('evCt').value]||'var(--accent)',description:document.getElementById('evLi').value||'',local:true});
-  saveCalEvs();renderCal();updCalStats();renderEvList();closeModal();
+  saveCalEvs();refreshAll();closeModal();
   showT('✅ Event "'+ti+'" saved!');document.getElementById('evTi').value='';document.getElementById('evLi').value='';
 }
 
@@ -1287,19 +1479,45 @@ function saveTsk(){
 // ══════════════════════════════════════════════
 function renderNotes(){
   const l=document.getElementById('nlist');
-  l.innerHTML=notes.map(n=>`<div class="ncard ${n.id===activeNote?'active':''}" onclick="openNote(${n.id})"><div class="nc-em">${n.emoji}</div><div class="nc-ti">${n.title}</div><div class="nc-dt">${n.date}</div></div>`).join('');
+  l.innerHTML=notes.map(n=>`
+    <div class="ncard ${n.id===activeNote?'active':''}" onclick="openNote(${n.id})" style="position:relative;">
+      <div class="nc-em">${n.emoji}</div>
+      <div class="nc-ti">${n.title}</div>
+      <div class="nc-dt">${n.date}</div>
+      <button onclick="deleteNote(${n.id},event)" title="Delete note" style="position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text3);display:flex;align-items:center;justify-content:center;transition:all 0.2s;cursor:pointer;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)';this.style.background='rgba(255,77,109,0.08)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)';this.style.background='transparent'">
+        <span class="material-symbols-outlined" style="font-size:12px;">delete</span>
+      </button>
+    </div>`).join('');
   const a=notes.find(n=>n.id===activeNote);
   if(a){document.getElementById('nti').value=a.title;document.getElementById('neb').value=a.body;}
 }
 function openNote(id){activeNote=id;renderNotes();}
-function newNote(){const id=Date.now();notes.unshift({id,emoji:'📄',title:'Untitled',body:'',date:'Just now'});activeNote=id;renderNotes();document.getElementById('nti').focus();}
+function deleteNote(id,e){
+  e.stopPropagation();
+  notes=notes.filter(n=>n.id!==id);
+  if(activeNote===id){activeNote=notes.length?notes[0].id:null;}
+  saveNotes();renderNotes();renderQuickNotes();
+  if(activeNote===null){document.getElementById('nti').value='';document.getElementById('neb').value='';}
+  showT('🗑 Note deleted');
+}
+function newNote(){const id=Date.now();notes.unshift({id,emoji:'📄',title:'Untitled',body:'',date:'Just now'});activeNote=id;saveNotes();renderNotes();renderQuickNotes();document.getElementById('nti').focus();}
+function renderQuickNotes(){
+  const el=document.getElementById('rpNotes');if(!el)return;
+  if(!notes.length){el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:4px 0;">No notes yet.</div>';return;}
+  el.innerHTML=notes.slice(0,3).map(n=>`
+    <div class="qnrp" style="cursor:pointer;" onclick="switchSec('notes',document.querySelector('[data-s=notes]'));openNote(${n.id})">
+      <div class="qnt">${n.emoji} ${n.title}</div>
+      <div class="qntt">${n.date}</div>
+    </div>`).join('');
+}
 function togTag(el){el.style.opacity=el.style.opacity==='0.4'?'1':'0.4';}
+function saveNotes(){try{localStorage.setItem(LS_NOTES,JSON.stringify(notes));}catch(e){}}
 function autoSv(){
   const n=notes.find(x=>x.id===activeNote);
   if(n){n.title=document.getElementById('nti').value||'Untitled';n.body=document.getElementById('neb').value;n.date='Just now';}
   clearTimeout(svTO);svTO=setTimeout(()=>{
     const si=document.getElementById('svi');si.style.display='flex';
-    renderNotes();setTimeout(()=>si.style.display='none',2000);
+    saveNotes();renderNotes();renderQuickNotes();setTimeout(()=>si.style.display='none',2000);
   },800);
 }
 
@@ -1329,7 +1547,8 @@ function switchSec(name,btn){
   const sec=document.getElementById('sec-'+name);
   if(sec){sec.style.display='';sec.classList.add('active');sec.classList.remove('fade-in');void sec.offsetWidth;sec.classList.add('fade-in');}
   if(btn)btn.classList.add('active');curSec=name;
-  if(name==='calendar')setTimeout(()=>renderEvList(),50);
+  if(name==='calendar')setTimeout(()=>{renderCalView();renderEvList();},50);
+  if(name==='overview')setTimeout(()=>{updCalStats();updOvTasks();renderQuickNotes();},50);
 }
 
 function setDate(){
@@ -1346,7 +1565,8 @@ function drNav(s,btn){
   const sec=document.getElementById('sec-'+s);
   if(sec){sec.style.display='block';sec.classList.add('active');sec.classList.remove('fade-in');void sec.offsetWidth;sec.classList.add('fade-in');}
   btn.classList.add('active');curSec=s;closeDrawer();
-  if(s==='calendar')setTimeout(()=>renderEvList(),50);
+  if(s==='calendar')setTimeout(()=>{renderCalView();renderEvList();},50);
+  if(s==='overview')setTimeout(()=>{updCalStats();updOvTasks();renderQuickNotes();},50);
 }
 
 function toggleDD(){document.getElementById('udrop').classList.toggle('show');}
