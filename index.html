@@ -282,10 +282,12 @@ button{cursor:pointer;font-family:var(--fb);}
 .neti{font-family:var(--fh);font-size:26px;font-weight:700;background:transparent;border:none;color:var(--text);outline:none;width:100%;margin-bottom:8px;}
 .neti::placeholder{color:var(--text3);}
 .ntags{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border);}
-.ntag{padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.2s;}
+.ntag{padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.2s;opacity:0.5;}
 .ntag.w{background:rgba(139,92,246,0.12);color:var(--accent2);}
 .ntag.p{background:rgba(16,217,126,0.12);color:var(--green);}
 .ntag.i{background:rgba(255,159,67,0.12);color:var(--orange);}
+.ntag.active{opacity:1;box-shadow:0 0 0 2px currentColor;}
+.ntag:hover{opacity:1;}
 .nebody{flex:1;background:transparent;border:none;color:var(--text2);font-size:14px;line-height:1.8;outline:none;resize:none;width:100%;}
 .nebody::placeholder{color:var(--text3);}
 .svi{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--green);margin-top:10px;}
@@ -584,14 +586,20 @@ button{cursor:pointer;font-family:var(--fb);}
           <div class="nlayout">
             <div class="nsl">
               <button class="newnbtn" onclick="newNote()"><span class="material-symbols-outlined" style="font-size:16px;">add</span>New Note</button>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+                <button class="fchip active" id="nfAll" onclick="filterNotes('all',this)">All</button>
+                <button class="fchip" onclick="filterNotes('work',this)">💼 Work</button>
+                <button class="fchip" onclick="filterNotes('personal',this)">🏠 Personal</button>
+                <button class="fchip" onclick="filterNotes('ideas',this)">💡 Ideas</button>
+              </div>
               <div id="nlist"></div>
             </div>
             <div class="nedit">
               <input type="text" class="neti" id="nti" placeholder="Note title…" oninput="autoSv()"/>
-              <div class="ntags">
-                <span class="ntag w" onclick="togTag(this)">💼 Work</span>
-                <span class="ntag p" onclick="togTag(this)">🏠 Personal</span>
-                <span class="ntag i" onclick="togTag(this)">💡 Ideas</span>
+              <div class="ntags" id="ntags">
+                <span class="ntag w" data-tag="work" onclick="setNoteTag('work',this)">💼 Work</span>
+                <span class="ntag p" data-tag="personal" onclick="setNoteTag('personal',this)">🏠 Personal</span>
+                <span class="ntag i" data-tag="ideas" onclick="setNoteTag('ideas',this)">💡 Ideas</span>
               </div>
               <textarea class="nebody" id="neb" placeholder="Start writing…" oninput="autoSv()"></textarea>
               <div class="svi" id="svi" style="display:none;"><span class="svdot"></span>Saved</div>
@@ -1422,7 +1430,7 @@ function renderKanban(){
             </div>
           </div>`).join('')}
       </div>
-      <button class="kadd" onclick="qAddTask('${col.k}')"><span class="material-symbols-outlined" style="font-size:14px;">add</span>Add task</button>
+      <button class="kadd" type="button" onclick="openTaskM()"><span class="material-symbols-outlined" style="font-size:14px;">add</span>Add task</button>
     </div>`).join('');
   updKanProg();updOvTasks();
 }
@@ -1487,9 +1495,7 @@ function togOvTask(item,id){
 }
 
 function qAddTask(col){
-  const ti=prompt('Task title:');if(!ti)return;
-  tasks[col].push({id:Date.now(),title:ti,priority:'medium',label:'TASK'});
-  saveTasks();renderKanban();showT('✅ Added!');
+  openTaskM(); // use modal instead of browser prompt
 }
 
 function openTaskM(){document.getElementById('tskMov').classList.add('show');}
@@ -1507,24 +1513,34 @@ function saveTsk(){
 // ══════════════════════════════════════════════
 function renderNotes(){
   const l=document.getElementById('nlist');
-  l.innerHTML=notes.map(n=>`
+  const tagColors={work:'var(--accent)',personal:'var(--green)',ideas:'var(--orange)'};
+  const tagLabels={work:'💼 Work',personal:'🏠 Personal',ideas:'💡 Ideas'};
+  const filtered=activeNoteFilter==='all'?notes:notes.filter(n=>n.tag===activeNoteFilter);
+  if(!filtered.length){
+    l.innerHTML='<div style="color:var(--text3);font-size:13px;padding:12px 0;">No '+(activeNoteFilter==='all'?'':'<b>'+tagLabels[activeNoteFilter]+'</b> ')+' notes yet.</div>';
+  } else {
+    l.innerHTML=filtered.map(n=>`
     <div class="ncard ${n.id===activeNote?'active':''}" onclick="openNote(${n.id})" style="position:relative;">
       <div class="nc-em">${n.emoji}</div>
-      <div class="nc-ti">${n.title||'Untitled'}</div>
-      <div class="nc-dt">${n.date}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="nc-ti">${n.title||'Untitled'}</div>
+        <div class="nc-dt">${n.date}${n.tag?` &nbsp;<span style="font-size:9px;font-weight:600;padding:1px 6px;border-radius:99px;background:${tagColors[n.tag]}22;color:${tagColors[n.tag]}">${tagLabels[n.tag]}</span>`:''}</div>
+      </div>
       <button onclick="deleteNote(${n.id},event)" title="Delete note" style="position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text3);display:flex;align-items:center;justify-content:center;transition:all 0.2s;cursor:pointer;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)';this.style.background='rgba(255,77,109,0.08)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)';this.style.background='transparent'">
         <span class="material-symbols-outlined" style="font-size:12px;">delete</span>
       </button>
     </div>`).join('');
+  }
   const a=notes.find(n=>n.id===activeNote);
   // Don't overwrite the title input if user is actively editing (keep their exact text)
   if(a){
     const nti=document.getElementById('nti'),neb=document.getElementById('neb');
     if(document.activeElement!==nti) nti.value=a.title;
     if(document.activeElement!==neb) neb.value=a.body;
+    syncNoteTagUI(a.tag||null);
   }
 }
-function openNote(id){activeNote=id;renderNotes();}
+function openNote(id){activeNote=id;renderNotes();const n=notes.find(x=>x.id===id);if(n)syncNoteTagUI(n.tag||null);}
 function deleteNote(id,e){
   e.stopPropagation();
   notes=notes.filter(n=>n.id!==id);
@@ -1543,7 +1559,26 @@ function renderQuickNotes(){
       <div class="qntt">${n.date}</div>
     </div>`).join('');
 }
-function togTag(el){el.style.opacity=el.style.opacity==='0.4'?'1':'0.4';}
+function togTag(el){el.style.opacity=el.style.opacity==='0.4'?'1':'0.4';} // kept for compat
+let activeNoteFilter='all';
+function filterNotes(tag,btn){
+  activeNoteFilter=tag;
+  document.querySelectorAll('#sec-notes .fchip').forEach(b=>b.classList.remove('active'));
+  if(btn)btn.classList.add('active');
+  renderNotes();
+}
+function setNoteTag(tag,el){
+  const n=notes.find(x=>x.id===activeNote);if(!n)return;
+  // Toggle off if same tag clicked
+  n.tag = n.tag===tag ? null : tag;
+  saveNotes();renderNotes();renderQuickNotes();
+  syncNoteTagUI(n.tag);
+}
+function syncNoteTagUI(tag){
+  document.querySelectorAll('#ntags .ntag').forEach(t=>{
+    t.classList.toggle('active', t.dataset.tag===tag && !!tag);
+  });
+}
 function saveNotes(){try{localStorage.setItem(LS_NOTES,JSON.stringify(notes));}catch(e){}}
 function autoSv(){
   const n=notes.find(x=>x.id===activeNote);
