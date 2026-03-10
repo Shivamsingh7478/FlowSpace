@@ -792,7 +792,7 @@ async function checkAutoLogin(){
         user=JSON.parse(cachedUser);isDemo=wasDemo;
         await launchApp(true);
         loadFromBackend();
-        if(isDemo){loadDemoData();}
+        if(isDemo){loadDemoData();} else {fetchGmail();fetchGCal();}
         return;
       }catch(e){}
     }
@@ -823,7 +823,7 @@ async function checkAutoLogin(){
       user=JSON.parse(cachedUser);isDemo=wasDemo;
       await launchApp(true);
       loadFromBackend();
-      if(isDemo){loadDemoData();}
+      if(isDemo){loadDemoData();} else {fetchGmail();fetchGCal();}
       showT('⚡ Restored from cache — working offline');
       return;
     }catch(e){}
@@ -1015,17 +1015,45 @@ function openGmail(){window.open('https://mail.google.com/mail/u/0/#inbox','_bla
 // ══════════════════════════════════════════════
 async function fetchGmail(){
   if(isDemo)return;
+  if(!accessToken){tryRefreshGmail();return;}
   try{
     document.getElementById('elist').innerHTML='<div class="loading"><div class="spin"></div>Fetching Gmail…</div>';
     const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q=in:inbox',{headers:{Authorization:'Bearer '+accessToken}});
+    if(r.status===401||r.status===403){accessToken=null;tryRefreshGmail();return;}
     const data=await r.json();
-    if(!data.messages){emails=[];renderEmails('all');return;}
+    if(!data.messages){emails=[];renderEmails('all');updEmailStats();return;}
     const msgs=await Promise.all(data.messages.slice(0,15).map(m=>fetchMsg(m.id)));
     emails=msgs.filter(Boolean);
-    // Apply persisted read state
     applyReadState();
     renderEmails('all');updEmailStats();
   }catch(e){showT('⚠️ Could not load Gmail');}
+}
+
+function tryRefreshGmail(){
+  if(!GOOGLE_CLIENT_ID){
+    document.getElementById('elist').innerHTML='<div style="padding:20px;color:var(--text3);font-size:13px;">Set your Google Client ID to load Gmail.</div>';
+    return;
+  }
+  try{
+    const tc=google.accounts.oauth2.initTokenClient({
+      client_id:GOOGLE_CLIENT_ID,scope:SCOPES,
+      callback:async(resp)=>{
+        if(resp.error||!resp.access_token){
+          document.getElementById('elist').innerHTML='<div style="padding:20px;color:var(--text3);font-size:13px;">Gmail session expired. <a href="#" onclick="doLogin()" style="color:var(--accent);">Reconnect ↗</a></div>';
+          return;
+        }
+        accessToken=resp.access_token;
+        // Refresh backend session with new token
+        const s=localStorage.getItem(LS_SESSION);
+        if(s) api('/api/auth','POST',{googleToken:accessToken,user}).then(d=>{if(d?.sessionId)localStorage.setItem(LS_SESSION,d.sessionId);});
+        fetchGmail();
+        fetchGCal();
+      }
+    });
+    tc.requestAccessToken();
+  }catch(e){
+    document.getElementById('elist').innerHTML='<div style="padding:20px;color:var(--text3);font-size:13px;"><a href="#" onclick="doLogin()" style="color:var(--accent);">Sign in again to load Gmail ↗</a></div>';
+  }
 }
 
 async function fetchMsg(id){
@@ -1482,14 +1510,19 @@ function renderNotes(){
   l.innerHTML=notes.map(n=>`
     <div class="ncard ${n.id===activeNote?'active':''}" onclick="openNote(${n.id})" style="position:relative;">
       <div class="nc-em">${n.emoji}</div>
-      <div class="nc-ti">${n.title}</div>
+      <div class="nc-ti">${n.title||'Untitled'}</div>
       <div class="nc-dt">${n.date}</div>
       <button onclick="deleteNote(${n.id},event)" title="Delete note" style="position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--text3);display:flex;align-items:center;justify-content:center;transition:all 0.2s;cursor:pointer;" onmouseover="this.style.borderColor='var(--red)';this.style.color='var(--red)';this.style.background='rgba(255,77,109,0.08)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text3)';this.style.background='transparent'">
         <span class="material-symbols-outlined" style="font-size:12px;">delete</span>
       </button>
     </div>`).join('');
   const a=notes.find(n=>n.id===activeNote);
-  if(a){document.getElementById('nti').value=a.title;document.getElementById('neb').value=a.body;}
+  // Don't overwrite the title input if user is actively editing (keep their exact text)
+  if(a){
+    const nti=document.getElementById('nti'),neb=document.getElementById('neb');
+    if(document.activeElement!==nti) nti.value=a.title;
+    if(document.activeElement!==neb) neb.value=a.body;
+  }
 }
 function openNote(id){activeNote=id;renderNotes();}
 function deleteNote(id,e){
@@ -1514,7 +1547,8 @@ function togTag(el){el.style.opacity=el.style.opacity==='0.4'?'1':'0.4';}
 function saveNotes(){try{localStorage.setItem(LS_NOTES,JSON.stringify(notes));}catch(e){}}
 function autoSv(){
   const n=notes.find(x=>x.id===activeNote);
-  if(n){n.title=document.getElementById('nti').value||'Untitled';n.body=document.getElementById('neb').value;n.date='Just now';}
+  // Save exactly what user typed — don't force 'Untitled' back in
+  if(n){n.title=document.getElementById('nti').value;n.body=document.getElementById('neb').value;n.date='Just now';}
   clearTimeout(svTO);svTO=setTimeout(()=>{
     const si=document.getElementById('svi');si.style.display='flex';
     saveNotes();renderNotes();renderQuickNotes();setTimeout(()=>si.style.display='none',2000);
